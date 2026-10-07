@@ -1,0 +1,210 @@
+// Prisma Schema for Student Result Analysis Dashboard
+// Designed for SQLite on Windows 11 with GTU / L.E. College result structure fidelity
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String     @id @default(uuid())
+  name         String
+  username     String     @unique
+  email        String?    @unique
+  passwordHash String
+  role         String     @default("FACULTY") // "ADMIN" | "FACULTY"
+  active       Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  auditLogs    AuditLog[]
+  importJobs   ImportJob[]
+
+  @@map("users")
+}
+
+model Branch {
+  id        String    @id @default(uuid())
+  code      String    @unique // e.g. "IT", "EE", "CE", "ICT", "ME", "EC"
+  name      String    // e.g. "Information Technology"
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  students  Student[]
+  subjects  Subject[]
+
+  @@map("branches")
+}
+
+model Semester {
+  id              String           @id @default(uuid())
+  number          Int              @unique // 1 to 6
+  name            String           // e.g. "Semester 1"
+  active          Boolean          @default(true)
+  subjects        Subject[]
+  semesterResults SemesterResult[]
+
+  @@map("semesters")
+}
+
+model AcademicYear {
+  id              String           @id @default(uuid())
+  name            String           @unique // e.g. "2023-2024"
+  startYear       Int
+  endYear         Int
+  isCurrent       Boolean          @default(false)
+  createdAt       DateTime         @default(now())
+  semesterResults SemesterResult[]
+
+  @@map("academic_years")
+}
+
+model Subject {
+  id             String          @id @default(uuid())
+  subjectCode    String          // e.g. "DI01000011", "3330701"
+  subjectName    String          // e.g. "Data Structures", "Database Management"
+  branchId       String?         // Optional: null means universal/first-year subject
+  branch         Branch?         @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  semesterId     String
+  semester       Semester        @relation(fields: [semesterId], references: [id], onDelete: Restrict)
+  credits        Float           @default(4.0)
+  active         Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  subjectResults SubjectResult[]
+
+  @@unique([subjectCode, branchId, semesterId])
+  @@map("subjects")
+}
+
+model Student {
+  id               String           @id @default(uuid())
+  enrollmentNumber String           @unique // e.g. "216170307001"
+  seatNumber       String?          // e.g. "E21617001"
+  fullName         String
+  branchId         String
+  branch           Branch           @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  batch            String?          // e.g. "2021-2024"
+  admissionYear    Int              @default(2021)
+  active           Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  semesterResults  SemesterResult[]
+
+  @@index([enrollmentNumber])
+  @@index([branchId])
+  @@map("students")
+}
+
+model SemesterResult {
+  id              String          @id @default(uuid())
+  studentId       String
+  student         Student         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  semesterId      String
+  semester        Semester        @relation(fields: [semesterId], references: [id], onDelete: Restrict)
+  academicYearId  String
+  academicYear    AcademicYear    @relation(fields: [academicYearId], references: [id], onDelete: Restrict)
+  seatNumber      String?
+  declarationDate String?         // e.g. "2023-06-15"
+  currentBacklog  Int             @default(0)
+  totalBacklog    Int             @default(0)
+  spi             Float           @default(0.0) // Semester Performance Index
+  cpi             Float           @default(0.0) // Cumulative Performance Index
+  cgpa            Float           @default(0.0) // Cumulative Grade Point Average
+  resultStatus    String          @default("PASS") // "PASS" | "FAIL" | "WITHHELD"
+  isCalculated    Boolean         @default(false) // true if computed, false if official imported
+  remarks         String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  subjectResults  SubjectResult[]
+
+  @@unique([studentId, semesterId, academicYearId])
+  @@index([studentId])
+  @@index([semesterId])
+  @@index([academicYearId])
+  @@map("semester_results")
+}
+
+model SubjectResult {
+  id               String         @id @default(uuid())
+  semesterResultId String
+  semesterResult   SemesterResult @relation(fields: [semesterResultId], references: [id], onDelete: Cascade)
+  subjectId        String
+  subject          Subject        @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  grade            String         // "AA", "AB", "BB", "BC", "CC", "CD", "DD", "FF", etc.
+  gradePoint       Float?         // Configurable mapped point (e.g. 10.0 for AA)
+  eIndicator       String?        // "Y" or "" or null
+  mIndicator       String?        // "Y" or "" or null
+  iIndicator       String?        // "Y" or "" or null
+  vIndicator       String?        // "Y" or "" or null
+  isBacklog        Boolean        @default(false) // true if grade is failing or backlog indicated
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([semesterResultId, subjectId])
+  @@index([semesterResultId])
+  @@index([subjectId])
+  @@map("subject_results")
+}
+
+model ImportJob {
+  id           String           @id @default(uuid())
+  fileName     String
+  fileSize     Int              @default(0)
+  uploadedById String?
+  uploadedBy   User?            @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  totalRows    Int              @default(0)
+  importedRows Int              @default(0)
+  failedRows   Int              @default(0)
+  status       String           @default("PENDING") // "PENDING" | "PROCESSING" | "COMPLETED" | "COMPLETED_WITH_ERRORS" | "FAILED"
+  notes        String?
+  createdAt    DateTime         @default(now())
+  completedAt  DateTime?
+  errors       ImportRowError[]
+
+  @@map("import_jobs")
+}
+
+model ImportRowError {
+  id           String    @id @default(uuid())
+  importJobId  String
+  importJob    ImportJob @relation(fields: [importJobId], references: [id], onDelete: Cascade)
+  rowNumber    Int
+  rawRowData   String?   // JSON representation of row
+  errorMessage String
+  severity     String    @default("ERROR") // "ERROR" or "WARNING"
+  createdAt    DateTime  @default(now())
+
+  @@index([importJobId])
+  @@map("import_row_errors")
+}
+
+model CalculationConfig {
+  id          String   @id @default(uuid())
+  key         String   @unique // e.g. "GRADE_POINTS_MAP", "INDICATOR_LABELS", "PASSING_CRITERIA"
+  value       String   // JSON string of rules
+  description String?
+  updatedAt   DateTime @updatedAt
+
+  @@map("calculation_configs")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String   // e.g. "LOGIN", "CREATE_STUDENT", "IMPORT_EXCEL", "EDIT_RESULT"
+  entity    String   // e.g. "Student", "SemesterResult", "User", "Subject"
+  entityId  String?
+  details   String?  // JSON string or summary
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
